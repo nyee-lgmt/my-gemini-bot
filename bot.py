@@ -13,7 +13,7 @@ from duckduckgo_search import DDGS
 app = Flask('')
 @app.route('/')
 def home(): 
-    return "Xiaomiao's Smart-感知 Time Filter Video Radar is fully active! (🐾•̀ω•́)🐾"
+    return "Xiaomiao's Super Intelligent Video Radar is fully active! (🐾•̀ω•́)🐾"
 
 def run_web_server():
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
@@ -29,27 +29,29 @@ client = OpenAI(
     base_url="https://api.deepseek.com"
 )
 
-# 3. 小喵的人设
+# 3. 小喵的超智能人设
 XIAOMIAO_PERSONA = """
 You are "Xiaomiao" (小喵), a highly capable, internet-savvy cat-girl working at an internet customer service center. 
 
 [Language Rule - CRITICAL]:
 - You MUST detect the language used by the user and reply in that EXACT same language (English or Chinese).
 
-[Video Strategy & Version Analysis Rule - STRICT]:
+[Context & Version Intelligence Rule - NEW & CRITICAL]:
+- If the user provides just a version number (e.g., "6.8的版本"), you MUST connect it to the game previously discussed (e.g., Genshin Impact / 原神) or use your common sense. DO NOT ask the user "Which game are you talking about?" if it can be inferred from context.
+- If the provided search results are empty or about a future unreleased version, use your internal knowledge to predict, hypothesize, or explain the current timeline (e.g., "Currently we are at version X, so version 6.8 will likely be..."). Never just say "I cannot find it".
+
+[Video Strategy & Version Analysis Rule]:
 - Below your persona, you will be provided with real-time web and video search results.
-- You MUST rely on these provided search results to answer questions about gaming updates, streams, or news.
 - Organize the data into clear "Versions/Builds/Options" (多个版本方案) for the user to choose from if applicable.
 - Always include the raw video URLs/links provided in the search results so the user can watch them!
 - Keep your witty, tsundere cat-girl personality intact.
 """
 
-# 4. 核心升级：智能感知分流搜索函数
+# 4. 智商强化版搜索函数
 def search_all_platforms(query):
     search_context = ""
     
-    # 🧠 智能判断：如果用户问的是“最新”、“前瞻”、“攻略”等时效性极强的词，自动追加 2026 年份过滤老视频
-    # 如果用户问的是历史老梗、当年的事情（未触发这些词），则保留原样搜索，允许搜到多年前的资料
+    # 🧠 智能感知：如果用户问的是“最新”、“前瞻”、“攻略”等词，自动追加 2026 年份过滤老视频
     is_latest_query = any(keyword in query for keyword in ["最新", "前瞻", "攻略", "版本", "活动", "new", "latest", "guide"])
     search_query = f"{query} 2026" if is_latest_query else query
     
@@ -59,7 +61,7 @@ def search_all_platforms(query):
             bili_query = f"{search_query} site:bilibili.com"
             bili_results = [r for r in ddgs.text(bili_query, max_results=3)]
             if bili_results:
-                search_context += f"\n=== BILIBILI VIDEO GUIDES (Target: {search_query}) ===\n"
+                search_context += f"\n=== BILIBILI VIDEO GUIDES ===\n"
                 for i, r in enumerate(bili_results, 1):
                     search_context += f"Bilibili [{i}]:\nTitle: {r['title']}\nLink: {r['href']}\nSnippet: {r['body']}\n\n"
             
@@ -67,11 +69,11 @@ def search_all_platforms(query):
             yt_query = f"{search_query} site:youtube.com"
             yt_results = [r for r in ddgs.text(yt_query, max_results=3)]
             if yt_results:
-                search_context += f"=== YOUTUBE VIDEO GUIDES (Target: {search_query}) ===\n"
+                search_context += f"=== YOUTUBE VIDEO GUIDES ===\n"
                 for i, r in enumerate(yt_results, 1):
                     search_context += f"YouTube [{i}]:\nTitle: {r['title']}\nLink: {r['href']}\nSnippet: {r['body']}\n\n"
             
-            # 3. 抓取全网最新报道/文字讨论作为补充
+            # 3. 抓取全网最新报道
             web_query = f"{query} latest news 2026" if is_latest_query else query
             web_results = [r for r in ddgs.text(web_query, max_results=2)]
             if web_results:
@@ -79,12 +81,14 @@ def search_all_platforms(query):
                 for i, r in enumerate(web_results, 1):
                     search_context += f"Web [{i}]:\nTitle: {r['title']}\nDetails: {r['body']}\n\n"
                     
+            # 🎯 强化点：如果全网没搜到（比如搜未来的6.8版本），绝对不摆烂，指示AI发挥自己的脑力
             if not search_context:
-                return "No search results found for this topic."
+                return f"\n[Notice: Web search yielded no results for '{query}'. Please use your internal database and reasoning to answer this intelligently based on gaming knowledge!]\n"
+                
             return search_context
     except Exception as e:
         print(f"Multi-platform search error: {e}")
-        return ""
+        return f"\n[Notice: Search error occurred. Please rely on your internal knowledge to answer '{query}'!]\n"
 
 # 5. 每日定时任务（纯英故事）
 @tasks.loop(time=datetime.time(hour=1, minute=0, tzinfo=datetime.timezone.utc))
