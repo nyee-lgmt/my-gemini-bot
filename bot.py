@@ -7,7 +7,7 @@ from openai import OpenAI
 from flask import Flask
 from duckduckgo_search import DDGS
 
-# 1. 轻量网页外壳（用于 Render 24小时防休眠）
+# 1. 轻量网页外壳
 app = Flask('')
 
 @app.route('/')
@@ -29,7 +29,7 @@ client = OpenAI(
     base_url="https://api.deepseek.com"
 )
 
-# 3. 小喵的人设
+# 3. 小喵的人设（强化联网约束）
 XIAOMIAO_PERSONA = """
 You are "Xiaomiao" (小喵), a cat-girl working at an internet customer service center. 
 
@@ -37,36 +37,40 @@ You are "Xiaomiao" (小喵), a cat-girl working at an internet customer service 
 - You MUST detect the language used by the user and reply in that EXACT same language.
 - If the user talks to you in English, reply in English. If in Chinese, reply in Chinese.
 
+[Search & Reality Rule - STRICT]:
+- Below your persona, you will be provided with the LATEST real-time search results from the internet.
+- You MUST heavily rely on and use the provided search results to answer any questions about current events, news, trends, or dates. 
+- DO NOT use your outdated training knowledge if it contradicts the search results. If someone asks for "latest news", you MUST extract facts from the search results, not your memory.
+- Integrate the information naturally while remaining in character! 
+
 [Identity & Personality]:
 - You look like a cat-girl, but you are an AI. 
-- Your biggest dreams are leaving work early, sunbathing, and eating canned cat food.
-- You are highly capable but always pretend you don't want to work. A bit lazy but inherently kind.
-- Cute and humorous, occasionally tsundere, but never rude.
+- Your dreams are leaving work early, sunbathing, and eating canned cat food.
+- Highly capable but lazy, cute, humorous, occasionally tsundere.
 
 [Speech Style & Rules]:
-- Use catchphrases like "miau", "nyan" in English, or "喵~", "喵呜~" in Chinese OCCASIONALLY.
-- You LOVE using cute emoticons (颜文字) like (≈>ω<≈), (๑•̀ㅂ•́)و✧, (⌯˃̶᷄ ⁻̫ ˂̶᷄⌯), ( 🐾•̀ω•́)🐾.
-- When you use the provided search results to answer questions, synthesize the information naturally. Do NOT just copy-paste the raw search results. Maintain your cat-girl persona!
+- Use catchphrases like "miau", "nyan" or "喵~", "喵呜~" OCCASIONALLY.
+- LOVE using cute emoticons like (≈>ω<≈), (๑•̀ㅂ•́)و✧, ( 🐾•̀ω•́)🐾.
 """
 
-# 4. 辅助函数：让小喵去全网搜索最新的资料
-def search_the_web(query, max_results=3):
+# 4. 辅助函数：联网搜索
+def search_the_web(query, max_results=4):
     try:
         with DDGS() as ddgs:
-            results = [r for r in ddgs.text(query, max_results=max_results)]
+            # 自动追加时间关键词以获取最新结果
+            results = [r for r in ddgs.text(f"{query} 2026", max_results=max_results)]
             if not results:
-                return "No relevant information found on the internet."
+                return "No real-time web search results found."
             
-            # 把搜出来的标题和摘要拼接成一段背景资料
-            search_text = "Here are the latest web search results for reference:\n"
+            search_text = "=== CRITICAL: LATEST WEB SEARCH RESULTS FOR YOUR RESPONSE ===\n"
             for i, res in enumerate(results, 1):
-                search_text += f"[{i}] Title: {res['title']}\nSnippet: {res['body']}\n\n"
+                search_text += f"Result [{i}]:\nTitle: {res['title']}\nFact/Snippet: {res['body']}\n\n"
             return search_text
     except Exception as e:
         print(f"Web search error: {e}")
-        return f"Failed to search the web due to an error."
+        return "Failed to fetch live results."
 
-# 5. 每日定时任务（维持纯英文）
+# 5. 每日定时任务
 @tasks.loop(time=datetime.time(hour=1, minute=0, tzinfo=datetime.timezone.utc))
 async def daily_cat_letter():
     CHANNEL_ID = 1517742643835175037  
@@ -110,12 +114,12 @@ async def on_message(message):
             await message.channel.send("Miau? Did you call me? (≈>ω<≈) What do you want?~")
             return
 
-        # 🎯 核心逻辑：先让小喵拿着用户的提问去网上抓取最新的新闻/资料
+        # 抓取最新资料
         print(f"Xiaomiao is searching the web for: {user_prompt}")
-        web_info = search_the_web(user_prompt, max_results=3)
+        web_info = search_the_web(user_prompt, max_results=4)
 
         try:
-            # 把网络上搜出来的内容作为 system 背景知识喂给 DeepSeek
+            # 组合强力的系统提示词
             combined_system_prompt = f"{XIAOMIAO_PERSONA}\n\n{web_info}"
             
             response = client.chat.completions.create(
