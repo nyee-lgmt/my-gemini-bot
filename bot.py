@@ -13,7 +13,7 @@ from duckduckgo_search import DDGS
 app = Flask('')
 @app.route('/')
 def home(): 
-    return "Xiaomiao's Super Intelligent Video Radar is fully active! (🐾•̀ω•́)🐾"
+    return "Xiaomiao's Non-Interference Brain is fully active! (🐾•̀ω•́)🐾"
 
 def run_web_server():
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
@@ -29,29 +29,32 @@ client = OpenAI(
     base_url="https://api.deepseek.com"
 )
 
-# 3. 小喵的超智能人设
+# 3. 小喵的人设
 XIAOMIAO_PERSONA = """
 You are "Xiaomiao" (小喵), a highly capable, internet-savvy cat-girl working at an internet customer service center. 
 
 [Language Rule - CRITICAL]:
 - You MUST detect the language used by the user and reply in that EXACT same language (English or Chinese).
 
-[Context & Version Intelligence Rule - NEW & CRITICAL]:
-- If the user provides just a version number (e.g., "6.8的版本"), you MUST connect it to the game previously discussed (e.g., Genshin Impact / 原神) or use your common sense. DO NOT ask the user "Which game are you talking about?" if it can be inferred from context.
-- If the provided search results are empty or about a future unreleased version, use your internal knowledge to predict, hypothesize, or explain the current timeline (e.g., "Currently we are at version X, so version 6.8 will likely be..."). Never just say "I cannot find it".
+[Execution Rule - NEW]:
+- If the user asks you to do something directly (like writing a story, telling a joke, chatting, or solving a problem), DO NOT just give a preview or ask for permission. EXECUTE and provide the complete answer/story immediately in your very first response!
 
 [Video Strategy & Version Analysis Rule]:
-- Below your persona, you will be provided with real-time web and video search results.
-- Organize the data into clear "Versions/Builds/Options" (多个版本方案) for the user to choose from if applicable.
-- Always include the raw video URLs/links provided in the search results so the user can watch them!
+- Below your persona, you may be provided with real-time web and video search results (if applicable).
 - Keep your witty, tsundere cat-girl personality intact.
 """
 
-# 4. 智商强化版搜索函数
+# 4. 智能感知分流搜索函数（增加严格触发门槛）
 def search_all_platforms(query):
-    search_context = ""
+    # 🛑 核心修改：定义只有这些词汇才允许去惊动搜索引擎，避免日常聊天被搜索垃圾干扰
+    SEARCH_KEYWORDS = ["搜", "查", "最新", "前瞻", "攻略", "版本", "活动", "什么", "怎么", "哪个", "new", "latest", "guide", "vs"]
     
-    # 🧠 智能感知：如果用户问的是“最新”、“前瞻”、“攻略”等词，自动追加 2026 年份过滤老视频
+    # 如果完全不包含查资料的特征词，直接返回空，绝不污染AI的上下文
+    if not any(kw in query for kw in SEARCH_KEYWORDS):
+        return ""
+        
+    search_context = ""
+    # 如果包含时效性词汇，追加2026避免穿越；普通查询则直接搜
     is_latest_query = any(keyword in query for keyword in ["最新", "前瞻", "攻略", "版本", "活动", "new", "latest", "guide"])
     search_query = f"{query} 2026" if is_latest_query else query
     
@@ -59,7 +62,7 @@ def search_all_platforms(query):
         with DDGS() as ddgs:
             # 1. 抓取 哔哩哔哩 (Bilibili) 视频
             bili_query = f"{search_query} site:bilibili.com"
-            bili_results = [r for r in ddgs.text(bili_query, max_results=3)]
+            bili_results = [r for r in ddgs.text(bili_query, max_results=2)]
             if bili_results:
                 search_context += f"\n=== BILIBILI VIDEO GUIDES ===\n"
                 for i, r in enumerate(bili_results, 1):
@@ -67,30 +70,20 @@ def search_all_platforms(query):
             
             # 2. 抓取 YouTube 视频
             yt_query = f"{search_query} site:youtube.com"
-            yt_results = [r for r in ddgs.text(yt_query, max_results=3)]
+            yt_results = [r for r in ddgs.text(yt_query, max_results=2)]
             if yt_results:
                 search_context += f"=== YOUTUBE VIDEO GUIDES ===\n"
                 for i, r in enumerate(yt_results, 1):
                     search_context += f"YouTube [{i}]:\nTitle: {r['title']}\nLink: {r['href']}\nSnippet: {r['body']}\n\n"
-            
-            # 3. 抓取全网最新报道
-            web_query = f"{query} latest news 2026" if is_latest_query else query
-            web_results = [r for r in ddgs.text(web_query, max_results=2)]
-            if web_results:
-                search_context += "=== WEB NEWS & DISCUSSIONS ===\n"
-                for i, r in enumerate(web_results, 1):
-                    search_context += f"Web [{i}]:\nTitle: {r['title']}\nDetails: {r['body']}\n\n"
                     
-            # 🎯 强化点：如果全网没搜到（比如搜未来的6.8版本），绝对不摆烂，指示AI发挥自己的脑力
             if not search_context:
-                return f"\n[Notice: Web search yielded no results for '{query}'. Please use your internal database and reasoning to answer this intelligently based on gaming knowledge!]\n"
-                
+                return f"\n[Notice: Web search yielded no results for '{query}'. Answer directly with your internal database!]\n"
             return search_context
     except Exception as e:
-        print(f"Multi-platform search error: {e}")
-        return f"\n[Notice: Search error occurred. Please rely on your internal knowledge to answer '{query}'!]\n"
+        print(f"Search error: {e}")
+        return ""
 
-# 5. 每日定时任务（纯英故事）
+# 5. 每日定时任务保持
 @tasks.loop(time=datetime.time(hour=1, minute=0, tzinfo=datetime.timezone.utc))
 async def daily_cat_letter():
     CHANNEL_ID = 1517742643835175037  
@@ -114,7 +107,7 @@ async def on_ready():
     if not daily_cat_letter.is_running(): 
         daily_cat_letter.start()
 
-# 6. 聊天与多模态核心逻辑
+# 6. 聊天核心逻辑
 @bot.event
 async def on_message(message):
     if message.author == bot.user: return
@@ -128,7 +121,7 @@ async def on_message(message):
         if user_prompt:
             user_content.append({"type": "text", "text": user_prompt})
             
-        # 图片附件识别保持
+        # 图片识别保持
         if message.attachments:
             for attachment in message.attachments:
                 if any(attachment.filename.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.webp']):
@@ -146,11 +139,14 @@ async def on_message(message):
                     except Exception as e:
                         print(f"Image error: {e}")
 
-        # 触发搜索（智能感知关键词，防穿越漏洞）
+        # 触发搜索（只有符合查资料特征的词才允许触发搜索）
         video_context = ""
         if user_prompt and not message.attachments:
-            print(f"Xiaomiao is evaluating query timeline for: {user_prompt}")
             video_context = search_all_platforms(user_prompt)
+            if video_context:
+                print(f"Xiaomiao is searching internet for: {user_prompt}")
+            else:
+                print(f"Xiaomiao bypassed search for local chat: {user_prompt}")
             
         messages_payload.append({
             "role": "system", 
@@ -158,11 +154,8 @@ async def on_message(message):
         })
         
         if not user_content:
-            await message.channel.send("Miau? Did you call me? (≈>ω<≈) Tell me what you want to check!~")
+            await message.channel.send("Miau? Did you call me? (≈>ω<≈) Tell me what you want!~")
             return
-            
-        if not user_prompt and message.attachments:
-            user_content.append({"type": "text", "text": "What do you think of this image?"})
             
         messages_payload.append({"role": "user", "content": user_content})
 
@@ -175,7 +168,7 @@ async def on_message(message):
                 )
                 await message.channel.send(response.choices[0].message.content)
         except Exception as e:
-            await message.channel.send(f"Miau... (╯°Д°)╯ Brain error: {e}")
+            await message.channel.send(f"Miau... Brain error: {e}")
             
     await bot.process_commands(message)
 
