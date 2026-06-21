@@ -385,7 +385,7 @@ async def daily_cat_letter() -> None:
             logger.error("Failed to send error message: %s", str(send_error))
 
 # -------------------------
-# 💬 每日主动闲聊任务
+# 💬 每日主动闲聊任务（英文版）
 # -------------------------
 @tasks.loop(hours=4.0)
 async def random_chat_task() -> None:
@@ -402,9 +402,12 @@ async def random_chat_task() -> None:
 
     system_content = config.XIAOMIAO_PERSONA.strip()
     chat_prompt = (
-        "你现在要主动在服务器群聊里发一条简短的信息打个招呼。 "
-        "请结合你傲娇、可爱的猫娘小喵人设，随机选择一个主题（比如：抱怨天气、伸懒腰、提醒主人喝水、分享刚抓到蝴蝶的喜悦，或是问大家在干嘛）。 "
-        "字数严格控制在 40 字以内，带上猫爪 🐾 等符合身份的颜表情，语气要生动活泼喵！"
+        "You need to spontaneously send a short, casual message in the server chat to say hello. "
+        "Based on your tsundere, cute cat-girl Xiaomiao persona, randomly choose a topic "
+        "(for example: complaining about the weather, stretching lazily, reminding the owner to drink water, "
+        "sharing the joy of catching a butterfly, or asking what everyone is doing). "
+        "Keep the message strictly under 40 characters, include cat paw 🐾 and other emojis that match your identity, "
+        "with a lively and playful tone! Write in English only."
     )
 
     try:
@@ -478,8 +481,8 @@ async def on_member_join(member: discord.Member) -> None:
     # 降级方案：使用预设欢迎语
     try:
         fallback_msg = (
-            f"Welcome to the server, {member.mention}! (🐾•̀ω•́)🐾 呜喵~ "
-            f"欢迎新朋友！我是小喵，有什么问题或者想聊天都可以随时 @我 喵！"
+            f"Welcome to the server, {member.mention}! (🐾•̀ω•́)🐾 Meow~ "
+            f"Welcome new friend! I'm Xiaomiao, feel free to ask me anything or chat anytime by @mentioning me!"
         )
         await channel.send(fallback_msg)
         logger.info("Fallback welcome message sent for %s", member.name)
@@ -623,7 +626,7 @@ async def on_message(message: discord.Message) -> None:
                     try:
                         await memory_manager.add_message(channel_id, {
                             "role": "user",
-                            "content": [{"type": "text", "text": user_prompt if user_prompt else "[图片消息]"}]
+                            "content": [{"type": "text", "text": user_prompt if user_prompt else "[Image message]"}]
                         })
                         await memory_manager.add_message(channel_id, {
                             "role": "assistant",
