@@ -516,23 +516,31 @@ async def on_ready() -> None:
             logger.error("Failed to start random chat task: %s", str(e))
 
 # -------------------------
-# 核心消息接收与对话处理
+# 核心消息接收与对话处理（调试版）
 # -------------------------
 @bot.event
 async def on_message(message: discord.Message) -> None:
     """处理消息事件"""
+    print(f"\n=== NEW MESSAGE ===")
+    print(f"Author: {message.author.name}")
+    print(f"Channel: {message.channel.name if hasattr(message.channel, 'name') else 'DM'}")
+    print(f"Content: {message.content[:100]}")
+    print(f"Bot user ID: {bot.user.id}")
+    print(f"Message mentions: {[m.id for m in message.mentions]}")
+    print(f"Bot in mentions? {bot.user in message.mentions}")
+    
     # 忽略 bot 自己的消息
     if message.author == bot.user:
+        print("❌ Ignoring own message")
         return
 
     # 检查是否被 @mention
     if bot.user in message.mentions:
-        logger.info(
-            "Message from %s in channel %s: %s",
-            message.author.name, message.channel.name, message.content[:100]
-        )
+        print("✅ BOT WAS MENTIONED!")
         
         user_prompt = message.content.replace(f'<@{bot.user.id}>', '').strip()
+        print(f"User prompt: {user_prompt}")
+        
         channel_id = message.channel.id
         user_content_list: List[Dict] = []
 
@@ -606,12 +614,15 @@ async def on_message(message: discord.Message) -> None:
         try:
             async with message.channel.typing():
                 try:
+                    print("🔄 Calling API...")
                     response = await call_deepseek_with_retry(messages_payload)
                     
                     if response is None:
+                        print("❌ API returned None")
                         logger.error("API returned None response")
                         raise Exception("API returned None")
                     
+                    print("✅ API response received")
                     reply_text = response.choices[0].message.content if hasattr(response, "choices") else str(response)
                     logger.debug("API response length: %d characters", len(reply_text))
 
@@ -619,6 +630,7 @@ async def on_message(message: discord.Message) -> None:
                     chunks = split_discord_message(reply_text)
                     logger.info("Sending %d message chunk(s)", len(chunks))
                     for i, chunk in enumerate(chunks, 1):
+                        print(f"📤 Sending chunk {i}/{len(chunks)}")
                         await message.channel.send(chunk)
                         logger.debug("Sent chunk %d/%d", i, len(chunks))
 
@@ -637,21 +649,26 @@ async def on_message(message: discord.Message) -> None:
                         logger.error("Failed to save conversation to memory: %s", str(e))
 
                 except asyncio.TimeoutError:
+                    print("❌ Request timeout")
                     error_msg = "Request timeout (30s exceeded)"
                     logger.error(error_msg)
                     await message.channel.send(config.MESSAGES.get("error", "Error: {}").format(error_msg))
                 except Exception as api_error:
+                    print(f"❌ API error: {api_error}")
                     error_msg = str(api_error)[:100]
                     logger.error("API call failed: %s", str(api_error), exc_info=True)
                     await message.channel.send(config.MESSAGES.get("error", "Error: {}").format(error_msg))
 
         except Exception as e:
+            print(f"❌ Message handling failed: {e}")
             logger.error("Message handling failed: %s", str(e), exc_info=True)
             try:
                 error_msg = str(e)[:100]
                 await message.channel.send(config.MESSAGES.get("error", "Error: {}").format(error_msg))
             except Exception as send_error:
                 logger.error("Failed to send error message: %s", str(send_error))
+    else:
+        print("⚠️ Bot was NOT mentioned")
 
     await bot.process_commands(message)
 
