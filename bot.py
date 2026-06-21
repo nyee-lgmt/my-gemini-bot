@@ -63,32 +63,39 @@ client = OpenAI(
 conversation_history = {}
 
 # -------------------------
-# 🧠 智能搜索函数（兼顾历史与当下，拒绝死板锁死）
+# 🧠 强力修正版智能搜索函数（禁止瞎猜，遇到游戏核心词强制联网）
 # -------------------------
 def search_all_platforms(query: str) -> str:
-    SEARCH_KEYWORDS = config.SEARCH_CONFIG.get("keywords", [])
-    if not any(kw in query for kw in SEARCH_KEYWORDS):
+    # 🚨 核心防御：只要用户提到这些关键词，不管有没有带“搜/查”，一律强制开启联网搜索！
+    GAME_TRIGGERS = ["原神", "配队", "攻略", "角色", "哥伦比娅", "少女"]
+    is_game_query = any(trigger in query for trigger in GAME_TRIGGERS)
+    
+    # 既没有触发游戏词，也没有触发常规配置关键词，才不联网
+    if not (is_game_query or any(kw in query for kw in config.SEARCH_CONFIG.get("keywords", []))):
         return ""
 
     search_context = ""
     
-    # 🌟 动态时效性判断：只有遇到明确需要最新情报的词，才追加 2026 
-    # 如果问的是历史配队、老版本、旧攻略，则保持原样搜索，绝不干涉
+    # 时效性动态触发
     latest_triggers = config.SEARCH_CONFIG.get("latest_keywords", []) + ["最新", "前瞻", "新角色", "内鬼", "后续版本", "新版本"]
     is_latest_query = any(keyword in query for keyword in latest_triggers)
     
     search_query = f"{query} 2026" if is_latest_query else query
+    
+    # 🎯 针对“哥伦比娅”的精准纠偏：如果包含此名字，直接优化搜索词，不给搜索引擎任何装糊涂的机会
+    if "哥伦比娅" in query:
+        search_query = "原神 愚人众执行官 哥伦比娅 角色信息 配队 2026"
 
     try:
         with DDGS() as ddgs:
-            # 1. 全网综合文本搜索（不锁死年份，完美兼容历史提问）
-            web_results = [r for r in ddgs.text(search_query, max_results=3)]
+            # 1. 全网综合文本搜索
+            web_results = [r for r in ddgs.text(search_query, max_results=4)]
             if web_results:
-                search_context += "\n=== WEB GENERAL INFO ===\n"
+                search_context += "\n=== WEB KNOWLEDGE BASE ===\n"
                 for i, r in enumerate(web_results, 1):
-                    search_context += f"Web [{i}]:\nTitle: {r.get('title')}\nSnippet: {r.get('body')}\n\n"
+                    search_context += f"Result [{i}]:\nTitle: {r.get('title')}\nSnippet: {r.get('body')}\n\n"
 
-            # 2. Bilibili 视频小抄
+            # 2. Bilibili 视频辅助小抄
             bili_results = [r for r in ddgs.text(f"{search_query} site:bilibili.com", max_results=config.SEARCH_CONFIG.get("bilibili_max_results", 2))]
             if bili_results:
                 search_context += "=== BILIBILI VIDEO GUIDES ===\n"
@@ -179,7 +186,7 @@ async def on_message(message):
                     except Exception:
                         logger.exception("Image handling error")
 
-        # 触发智能弹性搜索
+        # 触发智能弹性搜索（已经整合了强制游戏检索）
         video_context = ""
         if user_prompt and not message.attachments:
             video_context = await asyncio.to_thread(search_all_platforms, user_prompt)
