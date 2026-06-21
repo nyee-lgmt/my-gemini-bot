@@ -77,28 +77,28 @@ class ConversationMemory:
         self.max_channels = max_channels  # 最多缓存频道数
         self.max_memory_mb = max_memory_mb  # 最大内存 (MB)
         self.max_age_hours = max_age_hours  # 超过 24 小时未访问则清理
-    
+
     def add_message(self, channel_id: int, message: dict):
         """添加消息并检查内存"""
         self.storage[channel_id]["messages"].append(message)
         self.storage[channel_id]["last_accessed"] = time.time()
-        
+
         # 检查单个频道历史限制
         max_rounds = config.MEMORY_CONFIG.get("max_history_rounds", 5)
         max_len = max_rounds * 2
         if len(self.storage[channel_id]["messages"]) > max_len:
             self.storage[channel_id]["messages"] = self.storage[channel_id]["messages"][-max_len:]
-        
+
         # 定期清理过期和超大频道
         self._cleanup_if_needed()
-    
+
     def get_messages(self, channel_id: int) -> list:
         """获取频道的对话历史"""
         if channel_id in self.storage:
             self.storage[channel_id]["last_accessed"] = time.time()
             return self.storage[channel_id]["messages"]
         return []
-    
+
     def _cleanup_if_needed(self):
         """
         定期清理：
@@ -107,7 +107,7 @@ class ConversationMemory:
         """
         current_time = time.time()
         max_age_seconds = self.max_age_hours * 3600
-        
+
         # 清理过期频道
         expired = [
             ch_id for ch_id, data in self.storage.items()
@@ -116,7 +116,7 @@ class ConversationMemory:
         for ch_id in expired:
             logger.info("Cleaning expired channel %s", ch_id)
             del self.storage[ch_id]
-        
+
         # 频道数超限时，删除最旧的访问记录
         if len(self.storage) > self.max_channels:
             oldest = min(
@@ -139,20 +139,20 @@ def split_discord_message(text: str, max_length: int = 2000) -> list:
     """
     if len(text) <= max_length:
         return [text]
-    
+
     chunks = []
     current_chunk = ""
-    
+
     # 按段落分割优先
     paragraphs = text.split('\n\n')
-    
+
     for para in paragraphs:
         if len(current_chunk) + len(para) + 2 <= max_length:
             current_chunk += para + '\n\n'
         else:
             if current_chunk:
                 chunks.append(current_chunk.rstrip())
-            
+
             # 如果单个段落超长，按行分割
             if len(para) > max_length:
                 lines = para.split('\n')
@@ -168,10 +168,10 @@ def split_discord_message(text: str, max_length: int = 2000) -> list:
                     chunks.append(temp.rstrip())
             else:
                 current_chunk = para + '\n\n'
-    
+
     if current_chunk:
         chunks.append(current_chunk.rstrip())
-    
+
     return chunks
 
 # -------------------------
@@ -184,9 +184,9 @@ def search_all_platforms(query: str) -> str:
     search_context = ""
     latest_triggers = ["最新", "前瞻", "新角色", "内鬼", "后续版本", "新版本", "配队", "攻略"]
     is_latest_query = any(keyword in query for keyword in latest_triggers)
-    
+
     search_query = f"{query} 2026" if is_latest_query else query
-    
+
     if "哥伦比娅" in query:
         search_query = "原神 愚人众执行官 哥伦比娅 角色信息 配队 2026"
 
@@ -212,17 +212,16 @@ def search_all_platforms(query: str) -> str:
 # -------------------------
 # 📬 每日定时任务（严格对齐北京时间 9 点）
 # -------------------------
-# hour=1 (对应 UTC 时间 01:00)，换算北京时间 (UTC+8) 正好是早上 09:00
 @tasks.loop(time=datetime.time(
     hour=config.DAILY_TASK_CONFIG.get("hour", 1),
     minute=config.DAILY_TASK_CONFIG.get("minute", 0),
     tzinfo=datetime.timezone.utc
 ))
 async def daily_cat_letter():
-    # 🎯 已成功硬编码绑定你的频道 ID
     channel_id = config.DAILY_TASK_CONFIG.get("channel_id", "1517742643835175037")
     if not channel_id: return
 
+    # 🛠️ 确保转换为 int
     channel = bot.get_channel(int(channel_id))
     if not channel: return
 
@@ -241,18 +240,50 @@ async def daily_cat_letter():
         logger.exception("Daily letter failed: %s", e)
 
 # -------------------------
-# 🎉 新人入群英文欢迎事件
+# 🎉 新人入群智能 AI 欢迎事件（已完美修复与升级）
 # -------------------------
 @bot.event
 async def on_member_join(member):
-    # 🎯 同样绑定到你的核心消息频道 ID
-    channel_id = config.DAILY_TASK_CONFIG.get("channel_id", "1517742643835175037")
-    if not channel_id: return
+    logger.info("Detect new member joined: %s", member.name)
     
-    channel = bot.get_channel(int(channel_id))
+    # 获取绑定的核心频道 ID 并**强制转换为整型 int**
+    raw_channel_id = config.DAILY_TASK_CONFIG.get("channel_id", "1517742643835175037")
+    if not raw_channel_id: 
+        return
+
+    channel = bot.get_channel(int(raw_channel_id))
     if channel:
-        welcome_message = f"Welcome to the server, {member.mention}! We're so glad to have you here. Enjoy your stay! 🐾"
-        await channel.send(welcome_message)
+        # 组装 Prompt，调用模型为新人量身打造欢迎语
+        system_content = config.XIAOMIAO_PERSONA.strip()
+        welcome_prompt = (
+            f"群里新加入了一位成员，他的名字叫 '{member.name}'。 "
+            f"请用你专属的温暖、俏皮的猫娘口吻（带一些有意思的爪印或颜表情），写一句1到2句的简短群聊欢迎语，"
+            f"并贴心地提醒他，如果想找你聊天，可以随时在频道里 @Xiaomiao 呼唤你喵~"
+        )
+        
+        try:
+            # 异步调用大模型生成专属小喵风格欢迎词
+            response = await asyncio.to_thread(
+                client.chat.completions.create,
+                model=config.DEEPSEEK_CONFIG.get("model"),
+                messages=[
+                    {"role": "system", "content": system_content},
+                    {"role": "user", "content": welcome_prompt}
+                ],
+                stream=False
+            )
+            ai_welcome_msg = response.choices[0].message.content if hasattr(response, "choices") else ""
+            
+            if ai_welcome_msg.strip():
+                # 发送 AI 生成的富有灵魂的欢迎语并 @ 新人
+                await channel.send(f"{member.mention} {ai_welcome_msg.strip()}")
+                return
+        except Exception as e:
+            logger.error("AI failed to generate welcome message: %s", e)
+            
+        # 🛠️ 保底机制：若 API 调用偶发失败，采用高契合度的小喵标准欢迎语
+        fallback_msg = f"Welcome to the server, {member.mention}! (🐾•̀ω•́)🐾 呜喵~ 欢迎新朋友刚刚降落！我是小喵，有什么问题或者想聊天都可以随时 @我 呼唤我哦喵~"
+        await channel.send(fallback_msg)
 
 @bot.event
 async def on_ready():
@@ -330,7 +361,7 @@ async def on_message(message):
                 )
 
                 reply_text = response.choices[0].message.content if hasattr(response, "choices") else str(response)
-                
+
                 # ✅ 处理长消息
                 chunks = split_discord_message(reply_text)
                 for chunk in chunks:
