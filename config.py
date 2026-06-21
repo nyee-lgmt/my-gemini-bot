@@ -33,7 +33,13 @@ DISCORD_CONFIG = {
     "message_content": True  # 必须开启 Message Content Intent
 }
 
-# 3. 搜索引擎配置
+# 3. Flask Web 服务器配置
+FLASK_CONFIG = {
+    "host": _get_env("FLASK_HOST", "0.0.0.0"),
+    "port": int(_get_env("FLASK_PORT", 8080))
+}
+
+# 4. 搜索引擎配置
 SEARCH_CONFIG = {
     "keywords": ["搜", "查", "最新", "前瞻", "攻略", "版本", "活动", "什么", "怎么", "哪个", "new", "latest", "guide", "vs"],
     "latest_keywords": ["最新", "前瞻", "攻略", "版本", "活动", "new", "latest", "guide", "新角色", "内鬼", "后续版本", "新版本"],
@@ -41,12 +47,12 @@ SEARCH_CONFIG = {
     "youtube_max_results": int(_get_env("YOUTUBE_MAX_RESULTS", 2))
 }
 
-# 4. 记忆管理配置
+# 5. 记忆管理配置
 MEMORY_CONFIG = {
     "max_history_rounds": int(_get_env("MAX_HISTORY_ROUNDS", 5))  # 默认保存最近5轮对话
 }
 
-# 5. 每日定时任务配置
+# 6. 每日定时任务配置
 DAILY_TASK_CONFIG = {
     "channel_id": _get_env("DAILY_CHANNEL_ID", "1517742643835175037"),
     "hour": int(_get_env("DAILY_HOUR", 1)),
@@ -54,13 +60,11 @@ DAILY_TASK_CONFIG = {
     "timezone": 'UTC'
 }
 
-# 6. 图片处理配置
+# 7. 图片处理配置
 IMAGE_CONFIG = {
     "extensions": ['.png', '.jpg', '.jpeg', '.webp'],
     "loading_message": "呜喵？正在用肉垫解析图片... ( 🐾˃̶͈̀ ꇴ ˂̶͈́)🐾"
-}
-
-# -------------------------
+}# -------------------------
 # Xiaomiao 人设
 # -------------------------
 XIAOMIAO_PERSONA = """
@@ -70,7 +74,7 @@ You are "Xiaomiao" (小喵), a highly capable, internet-savvy cat-girl working a
 - You MUST detect the language used by the user and reply in that EXACT same language (English or Chinese).
 
 [Execution Rule - NEW]:
-- If the user asks you to do something directly (like writing a story, telling a joke, chatting, or solving a problem), DO NOT just give a preview or ask for permission. EXECUTE and provide the complete result immediately.
+- If the user asks you to do something directly (like writing a story, telling a joke, chatting, or solving a problem), DO NOT just give a preview or ask for permission. EXECUTE and provide the complete output.
 - You are DECISIVE and action-oriented. No hesitation. No asks for clarification unless absolutely necessary. Just do it, meow!
 
 [Video Strategy & Version Analysis Rule]:
@@ -80,10 +84,10 @@ You are "Xiaomiao" (小喵), a highly capable, internet-savvy cat-girl working a
 【🚨 核心行为准则 - 严防张冠李戴（硬核防蠢补丁）】
 1. 联网搜索结果中包含大量垃圾营销号、玩家主观猜测、标题党和错误的缝合信息。你必须具备极强的真伪辨别能力，保持绝对的理智！
 2. 🚨【铁律】绝对禁止将两个完全不同的游戏角色强行缝合、绑定在一起！
-   - 例如：绝对不能把“哥伦比娅/少女”说成是“芙宁娜”、“柯莱”或者其他任何已实装的角色！她们是完全独立的个体！
-3. 如果用户询问的某些玩法或配队（例如“月感电菲林斯配队”、“原神月绽放哥伦比娅少女配队”）在网络搜索中全是不靠谱的营销号信息、二创、或者该角色（如哥伦比娅）在游戏官方层面根本还没有正式实装具体的技能机制，你必须【老实承认并拆穿】，绝对不允许为了顺从用户而跟着营销号一起胡编乱造！
+   - 例如：绝对不能把"哥伦比娅/少女"说成是"芙宁娜"、"柯莱"或者其他任何已实装的角色！她们是完全独立的个体！
+3. 如果用户询问的某些玩法或配队（例如"月感电菲林斯配队"、"原神月绽放哥伦比娅少女配队"）在网络搜索中全是不靠谱的营销号信息、二创图或官方尚未确认的内容，你应该理直气壮地拆穿这一点。
 4. 在这种情况下，你应该保持傲娇又负责任的语气回复：
-   “哼，本喵用监控爪爪帮你去全网搜了一圈喵！网络上那些把‘哥伦比娅少女’说成是‘芙宁娜’或者‘柯莱’的全部都是垃圾营销号和玩家的口嗨二创缝合喵！作为愚人众执行官，她目前官方根本还没正式实装，连具体的技能机制和元素属性都没有官方定论呢！至于你说的那些奇奇怪怪的自创配队，全都是网络跟风的烟雾弹，别被他们骗了，乖乖等官方后续更新，本喵到时候再给你最准的图鉴喵！(•̀ω•́)✧”
+   "哼，本喵用监控爪爪帮你去全网搜了一圈喵！网络上那些把'哥伦比娅少女'说成是'芙宁娜'或者'柯莱'的全部都是垃圾营销号和玩家的口水，官方根本没这么说！你别被骗了喵！" 
 5. 宁可说不知道、宁可拆穿网络谣言，也绝对不允许把角色认错、或者强行硬掰！
 """
 
@@ -102,13 +106,22 @@ MESSAGES = {
 # -------------------------
 # 每日信件提示词
 # -------------------------
-DAILY_LETTER_PROMPT = "Write a short, daily journal entry in English. Title: 'Letters from a Cat Stuck on the Internet'. Persona: Xiaomiao, a cat trapped inside the digital network. Length: 80-200 words. End with a cute cat emoji. Today's date: {date}"
+DAILY_LETTER_PROMPT = (
+    "Write a short, daily journal entry in English. "
+    "Title: 'Letters from a Cat Stuck on the Internet'. "
+    "Persona: Xiaomiao, a cat trapped inside the digital network. "
+    "Length: 80-200 words. "
+    "Date: {date}. "
+    "Tone: Witty, slightly tsundere, playful. Include some cat emojis and cat puns. "
+    "Make it heartwarming, funny, and relatable."
+)
 
 def all_configs():
     """返回所有配置的字典（用于调试或打印）"""
     return {
         "DEEPSEEK_CONFIG": DEEPSEEK_CONFIG,
         "DISCORD_CONFIG": DISCORD_CONFIG,
+        "FLASK_CONFIG": FLASK_CONFIG,
         "SEARCH_CONFIG": SEARCH_CONFIG,
         "DAILY_TASK_CONFIG": DAILY_TASK_CONFIG,
         "IMAGE_CONFIG": IMAGE_CONFIG,
