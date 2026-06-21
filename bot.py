@@ -15,16 +15,24 @@ from duckduckgo_search import DDGS
 
 import config
 
+# -------------------------
 # Basic logging
+# -------------------------
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("my-gemini-bot")
 
+# -------------------------
+# Validate required envs
+# -------------------------
 try:
     config.validate_required_envs()
 except Exception as e:
     logger.error("Configuration validation failed: %s", e)
     raise SystemExit(f"Configuration validation failed: {e}")
 
+# -------------------------
+# Flask Web server (light)
+# -------------------------
 app = Flask("my-gemini-bot")
 
 @app.route("/")
@@ -36,19 +44,29 @@ def run_web_server():
     port = int(config.FLASK_CONFIG.get("port", 8080))
     app.run(host=host, port=port)
 
+# -------------------------
+# Discord bot setup
+# -------------------------
 intents = discord.Intents.default()
 intents.message_content = bool(config.DISCORD_CONFIG.get("message_content", True))
+# 🚨 开启成员监听，用于捕获新人进群事件
+intents.members = True 
+
 bot = commands.Bot(command_prefix=config.DISCORD_CONFIG.get("command_prefix", "!"), intents=intents)
 
+# -------------------------
+# DeepSeek / OpenAI client
+# -------------------------
 client = OpenAI(
     api_key=config.DEEPSEEK_CONFIG.get("api_key"),
     base_url=config.DEEPSEEK_CONFIG.get("base_url")
 )
 
+# 全局持久化记忆库
 conversation_history = {}
 
 # -------------------------
-# 🧠 强力智能检索 + 角色存在性验证
+# 无限制智能搜索函数
 # -------------------------
 def search_all_platforms(query: str) -> str:
     if not query or len(query.strip()) < 2:
@@ -82,12 +100,23 @@ def search_all_platforms(query: str) -> str:
         logger.exception("Search error")
         return ""
 
-@tasks.loop(time=datetime.time(hour=config.DAILY_TASK_CONFIG.get("hour", 1), minute=config.DAILY_TASK_CONFIG.get("minute", 0), tzinfo=datetime.timezone.utc))
+# -------------------------
+# 📬 每日定时任务（严格对齐北京时间 9 点）
+# -------------------------
+# hour=1 (对应 UTC 时间 01:00)，换算北京时间 (UTC+8) 正好是早上 09:00
+@tasks.loop(time=datetime.time(
+    hour=config.DAILY_TASK_CONFIG.get("hour", 1),
+    minute=config.DAILY_TASK_CONFIG.get("minute", 0),
+    tzinfo=datetime.timezone.utc
+))
 async def daily_cat_letter():
-    channel_id = config.DAILY_TASK_CONFIG.get("channel_id")
+    # 🎯 已成功硬编码绑定你的频道 ID
+    channel_id = config.DAILY_TASK_CONFIG.get("channel_id", "1517742643835175037")
     if not channel_id: return
+
     channel = bot.get_channel(int(channel_id))
     if not channel: return
+
     today_str = datetime.date.today().strftime("%Y-%m-%d")
     prompt = config.DAILY_LETTER_PROMPT.format(date=today_str)
     try:
@@ -102,6 +131,20 @@ async def daily_cat_letter():
     except Exception as e:
         logger.exception("Daily letter failed: %s", e)
 
+# -------------------------
+# 🎉 新人入群英文欢迎事件
+# -------------------------
+@bot.event
+async def on_member_join(member):
+    # 🎯 同样绑定到你的核心消息频道 ID
+    channel_id = config.DAILY_TASK_CONFIG.get("channel_id", "1517742643835175037")
+    if not channel_id: return
+    
+    channel = bot.get_channel(int(channel_id))
+    if channel:
+        welcome_message = f"Welcome to the server, {member.mention}! We're so glad to have you here. Enjoy your stay! 🐾"
+        await channel.send(welcome_message)
+
 @bot.event
 async def on_ready():
     logger.info("Xiaomiao is logged in as: %s", bot.user)
@@ -109,7 +152,7 @@ async def on_ready():
         daily_cat_letter.start()
 
 # -------------------------
-# 核心消息接收与拦截逻辑
+# 核心消息接收与对话记忆
 # -------------------------
 @bot.event
 async def on_message(message):
@@ -118,17 +161,6 @@ async def on_message(message):
 
     if bot.user in message.mentions:
         user_prompt = message.content.replace(f'<@{bot.user.id}>', '').strip()
-
-        # 🚨 强行降智拦截（硬核防御）：如果问的是哥伦比娅相关的配队，根本不需要大模型来瞎编，代码直接给它打断！
-        if "哥伦比娅" in user_prompt or ("少女" in user_prompt and "配队" in user_prompt):
-            # 给出一段聪明、傲娇、绝对挑不出毛病的完美标准回答
-            perfect_reply = (
-                "哼，本喵已经用监控爪爪帮你去全网搜了一圈喵！(•̀ω•́)✧\n\n"
-                "作为愚人众执行官的**‘哥伦比娅/少女’**，目前游戏官方**根本还没有正式实装**，连具体的技能机制、元素属性、后台/站场定位都完全没有官方定论喵！\n\n"
-                "你看到的什么‘月绽放’、‘月感电’配队，全都是网络上垃圾营销号的标题党或者是玩家自己口嗨的二创缝合烟雾弹，全都是假的喵！别被他们骗了。乖乖等官方后续更新，等她正式实装了，本喵绝对第一时间把最准的图鉴和全网最强配队双手奉上喵！🐾"
-            )
-            await message.channel.send(perfect_reply)
-            return  # 🚨 拦截成功，直接结束，不给 DeepSeek 任何胡说八道的机会！
 
         channel_id = message.channel.id
         if channel_id not in conversation_history:
