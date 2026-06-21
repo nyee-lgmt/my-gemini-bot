@@ -7,6 +7,7 @@ import datetime
 import aiohttp
 import base64
 import time
+import random  # 引入随机数用于闲聊抖动
 from collections import defaultdict
 
 import discord
@@ -65,50 +66,65 @@ client = OpenAI(
 )
 
 # -------------------------
+# 🧠 健壮的指数退避 API 重试代理 (整合超时机制)
+# -------------------------
+async def call_deepseek_with_retry(messages, max_retries=3):
+    """
+    带指数退避和 30 秒超时控制的大模型请求包装器
+    """
+    for attempt in range(max_retries):
+        try:
+            return await asyncio.to_thread(
+                client.chat.completions.create,
+                model=config.DEEPSEEK_CONFIG.get("model"),
+                messages=messages,
+                stream=False,
+                timeout=30  # 添加 30 秒强超时限制
+            )
+        except asyncio.TimeoutError:
+            if attempt < max_retries - 1:
+                await asyncio.sleep(2 ** attempt)  # 1s, 2s, 4s 指数退避
+            else:
+                raise
+        except Exception as e:
+            logger.error(f"API Attempt {attempt+1} failed: {type(e).__name__}: {e}")
+            if attempt == max_retries - 1:
+                raise
+
+# -------------------------
 # 智能对话记忆管理
 # -------------------------
 class ConversationMemory:
     """
     带有自动过期和大小限制的对话记忆管理器
-    防止内存泄漏
     """
     def __init__(self, max_channels=100, max_memory_mb=512, max_age_hours=24):
         self.storage = defaultdict(lambda: {"messages": [], "last_accessed": time.time()})
-        self.max_channels = max_channels  # 最多缓存频道数
-        self.max_memory_mb = max_memory_mb  # 最大内存 (MB)
-        self.max_age_hours = max_age_hours  # 超过 24 小时未访问则清理
+        self.max_channels = max_channels
+        self.max_memory_mb = max_memory_mb
+        self.max_age_hours = max_age_hours
 
     def add_message(self, channel_id: int, message: dict):
-        """添加消息并检查内存"""
         self.storage[channel_id]["messages"].append(message)
         self.storage[channel_id]["last_accessed"] = time.time()
 
-        # 检查单个频道历史限制
         max_rounds = config.MEMORY_CONFIG.get("max_history_rounds", 5)
         max_len = max_rounds * 2
         if len(self.storage[channel_id]["messages"]) > max_len:
             self.storage[channel_id]["messages"] = self.storage[channel_id]["messages"][-max_len:]
 
-        # 定期清理过期和超大频道
         self._cleanup_if_needed()
 
     def get_messages(self, channel_id: int) -> list:
-        """获取频道的对话历史"""
         if channel_id in self.storage:
             self.storage[channel_id]["last_accessed"] = time.time()
             return self.storage[channel_id]["messages"]
         return []
 
     def _cleanup_if_needed(self):
-        """
-        定期清理：
-        1. 超过 24 小时未访问的频道
-        2. 超过频道数上限时，删除最旧的
-        """
         current_time = time.time()
         max_age_seconds = self.max_age_hours * 3600
 
-        # 清理过期频道
         expired = [
             ch_id for ch_id, data in self.storage.items()
             if current_time - data["last_accessed"] > max_age_seconds
@@ -117,33 +133,22 @@ class ConversationMemory:
             logger.info("Cleaning expired channel %s", ch_id)
             del self.storage[ch_id]
 
-        # 频道数超限时，删除最旧的访问记录
         if len(self.storage) > self.max_channels:
-            oldest = min(
-                self.storage.items(),
-                key=lambda x: x[1]["last_accessed"]
-            )[0]
+            oldest = min(self.storage.items(), key=lambda x: x[1]["last_accessed"])[0]
             logger.warning("Memory full, removing oldest channel %s", oldest)
             del self.storage[oldest]
 
-# 初始化智能记忆管理器
 memory_manager = ConversationMemory(max_channels=100, max_memory_mb=512, max_age_hours=24)
 
 # -------------------------
 # 消息分割工具
 # -------------------------
 def split_discord_message(text: str, max_length: int = 2000) -> list:
-    """
-    将长文本分割成多条 Discord 消息（不超过 2000 字符）
-    保持完整的句子和代码块结构
-    """
     if len(text) <= max_length:
         return [text]
 
     chunks = []
     current_chunk = ""
-
-    # 按段落分割优先
     paragraphs = text.split('\n\n')
 
     for para in paragraphs:
@@ -153,7 +158,6 @@ def split_discord_message(text: str, max_length: int = 2000) -> list:
             if current_chunk:
                 chunks.append(current_chunk.rstrip())
 
-            # 如果单个段落超长，按行分割
             if len(para) > max_length:
                 lines = para.split('\n')
                 temp = ""
@@ -197,13 +201,6 @@ def search_all_platforms(query: str) -> str:
                 search_context += "\n=== WEB KNOWLEDGE BASE ===\n"
                 for i, r in enumerate(web_results, 1):
                     search_context += f"Result [{i}]:\nTitle: {r.get('title')}\nSnippet: {r.get('body')}\n\n"
-
-            bili_results = [r for r in ddgs.text(f"{search_query} site:bilibili.com", max_results=2)]
-            if bili_results:
-                search_context += "=== BILIBILI VIDEO GUIDES ===\n"
-                for i, r in enumerate(bili_results, 1):
-                    search_context += f"Bilibili [{i}]:\nTitle: {r.get('title')}\nLink: {r.get('href')}\nSnippet: {r.get('body')}\n\n"
-
             return search_context
     except Exception:
         logger.exception("Search error")
@@ -221,39 +218,61 @@ async def daily_cat_letter():
     channel_id = config.DAILY_TASK_CONFIG.get("channel_id", "1517742643835175037")
     if not channel_id: return
 
-    # 🛠️ 确保转换为 int
     channel = bot.get_channel(int(channel_id))
     if not channel: return
 
     today_str = datetime.date.today().strftime("%Y-%m-%d")
     prompt = config.DAILY_LETTER_PROMPT.format(date=today_str)
     try:
-        response = await asyncio.to_thread(
-            client.chat.completions.create,
-            model=config.DEEPSEEK_CONFIG.get("model"),
-            messages=[{"role": "user", "content": prompt}],
-            stream=False
-        )
+        # 🎯 改用优化后的重试包装代理
+        response = await call_deepseek_with_retry([{"role": "user", "content": prompt}])
         reply_text = response.choices[0].message.content if hasattr(response, "choices") else str(response)
         await channel.send(f"{config.MESSAGES.get('daily_letter_header','')}{reply_text}\n━━━━━━━━━━━━━━━━━━━━")
     except Exception as e:
         logger.exception("Daily letter failed: %s", e)
 
 # -------------------------
-# 🎉 新人入群智能 AI 欢迎事件（已完美修复与升级）
+# 💬 每日每隔 X 小时自动“主动闲聊”任务
+# -------------------------
+@tasks.loop(hours=4.0)  # 每隔 4 小时主动在群里冒泡一次，数字可自己改
+async def random_chat_task():
+    channel_id = config.DAILY_TASK_CONFIG.get("channel_id", "1517742643835175037")
+    if not channel_id: return
+
+    channel = bot.get_channel(int(channel_id))
+    if not channel: return
+
+    system_content = config.XIAOMIAO_PERSONA.strip()
+    chat_prompt = (
+        "你现在要主动在服务器群聊里发一条简短的信息打个招呼。 "
+        "请结合你傲娇、可爱的猫娘小喵人设，随机选择一个主题（比如：抱怨天气、伸懒腰、提醒主人喝水、分享刚抓到蝴蝶的喜悦，或是问大家在干嘛）。"
+        "字数严格控制在 40 字以内，带上猫爪 🐾 等符合身份的颜表情，语气要生动活泼喵！"
+    )
+
+    try:
+        # 🎯 利用重试包装代理请求
+        response = await call_deepseek_with_retry([
+            {"role": "system", "content": system_content},
+            {"role": "user", "content": chat_prompt}
+        ])
+        chat_msg = response.choices[0].message.content if hasattr(response, "choices") else ""
+        if chat_msg.strip():
+            await channel.send(chat_msg.strip())
+    except Exception as e:
+        logger.error("Failed to execute random chat push: %s", e)
+
+# -------------------------
+# 🎉 新人入群智能 AI 欢迎事件
 # -------------------------
 @bot.event
 async def on_member_join(member):
     logger.info("Detect new member joined: %s", member.name)
     
-    # 获取绑定的核心频道 ID 并**强制转换为整型 int**
     raw_channel_id = config.DAILY_TASK_CONFIG.get("channel_id", "1517742643835175037")
-    if not raw_channel_id: 
-        return
+    if not raw_channel_id: return
 
     channel = bot.get_channel(int(raw_channel_id))
     if channel:
-        # 组装 Prompt，调用模型为新人量身打造欢迎语
         system_content = config.XIAOMIAO_PERSONA.strip()
         welcome_prompt = (
             f"群里新加入了一位成员，他的名字叫 '{member.name}'。 "
@@ -262,34 +281,31 @@ async def on_member_join(member):
         )
         
         try:
-            # 异步调用大模型生成专属小喵风格欢迎词
-            response = await asyncio.to_thread(
-                client.chat.completions.create,
-                model=config.DEEPSEEK_CONFIG.get("model"),
-                messages=[
-                    {"role": "system", "content": system_content},
-                    {"role": "user", "content": welcome_prompt}
-                ],
-                stream=False
-            )
+            # 🎯 同样采用重试包装代理
+            response = await call_deepseek_with_retry([
+                {"role": "system", "content": system_content},
+                {"role": "user", "content": welcome_prompt}
+            ])
             ai_welcome_msg = response.choices[0].message.content if hasattr(response, "choices") else ""
             
             if ai_welcome_msg.strip():
-                # 发送 AI 生成的富有灵魂的欢迎语并 @ 新人
                 await channel.send(f"{member.mention} {ai_welcome_msg.strip()}")
                 return
         except Exception as e:
             logger.error("AI failed to generate welcome message: %s", e)
             
-        # 🛠️ 保底机制：若 API 调用偶发失败，采用高契合度的小喵标准欢迎语
         fallback_msg = f"Welcome to the server, {member.mention}! (🐾•̀ω•́)🐾 呜喵~ 欢迎新朋友刚刚降落！我是小喵，有什么问题或者想聊天都可以随时 @我 呼唤我哦喵~"
         await channel.send(fallback_msg)
 
 @bot.event
 async def on_ready():
     logger.info("Xiaomiao is logged in as: %s", bot.user)
+    # 启动 9点 定时任务
     if not daily_cat_letter.is_running():
         daily_cat_letter.start()
+    # 启动 主动闲聊 定时任务
+    if not random_chat_task.is_running():
+        random_chat_task.start()
 
 # -------------------------
 # 核心消息接收与对话记忆
@@ -301,9 +317,7 @@ async def on_message(message):
 
     if bot.user in message.mentions:
         user_prompt = message.content.replace(f'<@{bot.user.id}>', '').strip()
-
         channel_id = message.channel.id
-
         messages_payload = []
         user_content_list = []
 
@@ -353,21 +367,15 @@ async def on_message(message):
 
         try:
             async with message.channel.typing():
-                response = await asyncio.to_thread(
-                    client.chat.completions.create,
-                    model=config.DEEPSEEK_CONFIG.get("model"),
-                    messages=messages_payload,
-                    stream=False
-                )
+                # 🎯 全面换用重试控制逻辑
+                response = await call_deepseek_with_retry(messages_payload)
 
                 reply_text = response.choices[0].message.content if hasattr(response, "choices") else str(response)
 
-                # ✅ 处理长消息
                 chunks = split_discord_message(reply_text)
                 for chunk in chunks:
                     await message.channel.send(chunk)
 
-                # 保存到对话历史
                 memory_manager.add_message(channel_id, {
                     "role": "user", 
                     "content": [{"type": "text", "text": user_prompt if user_prompt else "[图片消息]"}]
