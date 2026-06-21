@@ -59,11 +59,11 @@ client = OpenAI(
     base_url=config.DEEPSEEK_CONFIG.get("base_url")
 )
 
-# 🧠 在内存中低消耗存储历史
+# 🧠 全局持久化记忆库
 conversation_history = {}
 
 # -------------------------
-# 优化后的搜索引擎：全网+视频混合抓取，彻底解决“哥伦比亚”误区
+# 🧠 智能搜索函数（兼顾历史与当下，拒绝死板锁死）
 # -------------------------
 def search_all_platforms(query: str) -> str:
     SEARCH_KEYWORDS = config.SEARCH_CONFIG.get("keywords", [])
@@ -71,12 +71,17 @@ def search_all_platforms(query: str) -> str:
         return ""
 
     search_context = ""
-    is_latest_query = any(keyword in query for keyword in config.SEARCH_CONFIG.get("latest_keywords", []))
+    
+    # 🌟 动态时效性判断：只有遇到明确需要最新情报的词，才追加 2026 
+    # 如果问的是历史配队、老版本、旧攻略，则保持原样搜索，绝不干涉
+    latest_triggers = config.SEARCH_CONFIG.get("latest_keywords", []) + ["最新", "前瞻", "新角色", "内鬼", "后续版本", "新版本"]
+    is_latest_query = any(keyword in query for keyword in latest_triggers)
+    
     search_query = f"{query} 2026" if is_latest_query else query
 
     try:
         with DDGS() as ddgs:
-            # 1. 【新增】全网综合文本搜索（解决角色百科、论坛讨论等盲区）
+            # 1. 全网综合文本搜索（不锁死年份，完美兼容历史提问）
             web_results = [r for r in ddgs.text(search_query, max_results=3)]
             if web_results:
                 search_context += "\n=== WEB GENERAL INFO ===\n"
@@ -133,7 +138,7 @@ async def on_ready():
         daily_cat_letter.start()
 
 # -------------------------
-# 核心消息接收与多模态无损修复
+# 核心消息接收与记忆对齐
 # -------------------------
 @bot.event
 async def on_message(message):
@@ -148,14 +153,12 @@ async def on_message(message):
             conversation_history[channel_id] = []
 
         messages_payload = []
-        
-        # 🟢 修复重点：构建标准的符合大模型 API 规范的结构化多模态列表
         user_content_list = []
 
         if user_prompt:
             user_content_list.append({"type": "text", "text": user_prompt})
 
-        # 处理图片附件并完美转为 Base64
+        # 图片附件无损转 Base64 塞入当前 Payload
         if message.attachments:
             for attachment in message.attachments:
                 fname = attachment.filename or "image"
@@ -167,7 +170,6 @@ async def on_message(message):
                                 if resp.status == 200:
                                     image_data = await resp.read()
                                     base64_image = base64.b64encode(image_data).decode('utf-8')
-                                    # 🟢 扔掉纯文本伪装！恢复标准的多模态图片 payload 输入
                                     user_content_list.append({
                                         "type": "image_url",
                                         "image_url": {"url": f"data:{attachment.content_type};base64,{base64_image}"}
@@ -177,12 +179,12 @@ async def on_message(message):
                     except Exception:
                         logger.exception("Image handling error")
 
-        # 触发全网+视频智能搜索
+        # 触发智能弹性搜索
         video_context = ""
         if user_prompt and not message.attachments:
             video_context = await asyncio.to_thread(search_all_platforms, user_prompt)
 
-        # 注入系统人设与搜索小抄
+        # 1. 注入人设与联网搜索结果
         system_content = config.XIAOMIAO_PERSONA.strip()
         if video_context:
             system_content = f"{system_content}\n\nExternal Search Results (may be unreliable):\n{video_context}"
@@ -192,14 +194,14 @@ async def on_message(message):
             "content": system_content
         })
 
-        # 追加历史轮次记忆（由于采用了基础格式，此处可以无缝叠加历史文本记录）
+        # 2. 追加历史轮次记忆（格式完全规范统一）
         messages_payload.extend(conversation_history[channel_id])
 
         if not user_content_list:
             await message.channel.send(config.MESSAGES.get("no_input", "No input detected."))
             return
 
-        # 把当前这一轮的用户输入（可能是文字，也可能是真正的Base64多模态图片）塞入列表
+        # 3. 拼接用户当前这一轮的输入
         messages_payload.append({"role": "user", "content": user_content_list})
 
         try:
@@ -214,12 +216,17 @@ async def on_message(message):
                 reply_text = response.choices[0].message.content if hasattr(response, "choices") else str(response)
                 await message.channel.send(reply_text)
 
-                # 💾 记忆存入：由于图片体积过大不宜长期存在上下文历史中，历史记忆库里只记录纯文本
-                # 这样可以做到极高性价比的低消耗记忆！
-                conversation_history[channel_id].append({"role": "user", "content": user_prompt if user_prompt else "[图片消息]"})
-                conversation_history[channel_id].append({"role": "assistant", "content": reply_text})
+                # 4. 记忆库中统一采用结构化字典保存，杜绝选择性失忆
+                conversation_history[channel_id].append({
+                    "role": "user", 
+                    "content": [{"type": "text", "text": user_prompt if user_prompt else "[图片消息]"}]
+                })
+                conversation_history[channel_id].append({
+                    "role": "assistant", 
+                    "content": reply_text
+                })
 
-                # 根据 config 严格剪裁记忆轮数
+                # 严格裁剪记忆轮数
                 max_rounds = config.MEMORY_CONFIG.get("max_history_rounds", 5)
                 max_len = max_rounds * 2
                 conversation_history[channel_id] = conversation_history[channel_id][-max_len:]
