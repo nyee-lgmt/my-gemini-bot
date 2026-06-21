@@ -1,4 +1,6 @@
 discord.py
 openai
 flask
-duckduckgo_search
+duckduckgo-search
+python-dotenv
+aiohttp
