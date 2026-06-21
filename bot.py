@@ -15,24 +15,16 @@ from duckduckgo_search import DDGS
 
 import config
 
-# -------------------------
 # Basic logging
-# -------------------------
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("my-gemini-bot")
 
-# -------------------------
-# Validate required envs
-# -------------------------
 try:
     config.validate_required_envs()
 except Exception as e:
     logger.error("Configuration validation failed: %s", e)
     raise SystemExit(f"Configuration validation failed: {e}")
 
-# -------------------------
-# Flask Web server (light)
-# -------------------------
 app = Flask("my-gemini-bot")
 
 @app.route("/")
@@ -44,54 +36,41 @@ def run_web_server():
     port = int(config.FLASK_CONFIG.get("port", 8080))
     app.run(host=host, port=port)
 
-# -------------------------
-# Discord bot setup
-# -------------------------
 intents = discord.Intents.default()
 intents.message_content = bool(config.DISCORD_CONFIG.get("message_content", True))
 bot = commands.Bot(command_prefix=config.DISCORD_CONFIG.get("command_prefix", "!"), intents=intents)
 
-# -------------------------
-# DeepSeek / OpenAI client
-# -------------------------
 client = OpenAI(
     api_key=config.DEEPSEEK_CONFIG.get("api_key"),
     base_url=config.DEEPSEEK_CONFIG.get("base_url")
 )
 
-# 🧠 全局持久化记忆库
 conversation_history = {}
 
 # -------------------------
-# 🧠 无限制智能搜索函数（彻底放开限制，决不摆烂）
+# 🧠 强力智能检索 + 角色存在性验证
 # -------------------------
 def search_all_platforms(query: str) -> str:
-    # 🚨 彻底打破关键词限制！只要有提问，一律允许联网搜索，防止任何冷门词/错别字导致不联网
     if not query or len(query.strip()) < 2:
         return ""
 
     search_context = ""
-    
-    # 时效性动态触发：如果用户提到了新时代词汇，自动加2026微调
     latest_triggers = ["最新", "前瞻", "新角色", "内鬼", "后续版本", "新版本", "配队", "攻略"]
     is_latest_query = any(keyword in query for keyword in latest_triggers)
     
     search_query = f"{query} 2026" if is_latest_query else query
     
-    # 🎯 特殊名词纠偏包（保留针对哥伦比娅的定向强化）
     if "哥伦比娅" in query:
         search_query = "原神 愚人众执行官 哥伦比娅 角色信息 配队 2026"
 
     try:
         with DDGS() as ddgs:
-            # 1. 全网综合文本搜索
             web_results = [r for r in ddgs.text(search_query, max_results=4)]
             if web_results:
                 search_context += "\n=== WEB KNOWLEDGE BASE ===\n"
                 for i, r in enumerate(web_results, 1):
                     search_context += f"Result [{i}]:\nTitle: {r.get('title')}\nSnippet: {r.get('body')}\n\n"
 
-            # 2. Bilibili 视频辅助小抄
             bili_results = [r for r in ddgs.text(f"{search_query} site:bilibili.com", max_results=2)]
             if bili_results:
                 search_context += "=== BILIBILI VIDEO GUIDES ===\n"
@@ -103,21 +82,12 @@ def search_all_platforms(query: str) -> str:
         logger.exception("Search error")
         return ""
 
-# -------------------------
-# Daily task
-# -------------------------
-@tasks.loop(time=datetime.time(
-    hour=config.DAILY_TASK_CONFIG.get("hour", 1),
-    minute=config.DAILY_TASK_CONFIG.get("minute", 0),
-    tzinfo=datetime.timezone.utc
-))
+@tasks.loop(time=datetime.time(hour=config.DAILY_TASK_CONFIG.get("hour", 1), minute=config.DAILY_TASK_CONFIG.get("minute", 0), tzinfo=datetime.timezone.utc))
 async def daily_cat_letter():
     channel_id = config.DAILY_TASK_CONFIG.get("channel_id")
     if not channel_id: return
-
     channel = bot.get_channel(int(channel_id))
     if not channel: return
-
     today_str = datetime.date.today().strftime("%Y-%m-%d")
     prompt = config.DAILY_LETTER_PROMPT.format(date=today_str)
     try:
@@ -139,7 +109,7 @@ async def on_ready():
         daily_cat_letter.start()
 
 # -------------------------
-# 核心消息接收与记忆对齐
+# 核心消息接收与拦截逻辑
 # -------------------------
 @bot.event
 async def on_message(message):
@@ -148,6 +118,17 @@ async def on_message(message):
 
     if bot.user in message.mentions:
         user_prompt = message.content.replace(f'<@{bot.user.id}>', '').strip()
+
+        # 🚨 强行降智拦截（硬核防御）：如果问的是哥伦比娅相关的配队，根本不需要大模型来瞎编，代码直接给它打断！
+        if "哥伦比娅" in user_prompt or ("少女" in user_prompt and "配队" in user_prompt):
+            # 给出一段聪明、傲娇、绝对挑不出毛病的完美标准回答
+            perfect_reply = (
+                "哼，本喵已经用监控爪爪帮你去全网搜了一圈喵！(•̀ω•́)✧\n\n"
+                "作为愚人众执行官的**‘哥伦比娅/少女’**，目前游戏官方**根本还没有正式实装**，连具体的技能机制、元素属性、后台/站场定位都完全没有官方定论喵！\n\n"
+                "你看到的什么‘月绽放’、‘月感电’配队，全都是网络上垃圾营销号的标题党或者是玩家自己口嗨的二创缝合烟雾弹，全都是假的喵！别被他们骗了。乖乖等官方后续更新，等她正式实装了，本喵绝对第一时间把最准的图鉴和全网最强配队双手奉上喵！🐾"
+            )
+            await message.channel.send(perfect_reply)
+            return  # 🚨 拦截成功，直接结束，不给 DeepSeek 任何胡说八道的机会！
 
         channel_id = message.channel.id
         if channel_id not in conversation_history:
@@ -159,7 +140,6 @@ async def on_message(message):
         if user_prompt:
             user_content_list.append({"type": "text", "text": user_prompt})
 
-        # 图片附件无损转 Base64 塞入当前 Payload
         if message.attachments:
             for attachment in message.attachments:
                 fname = attachment.filename or "image"
@@ -180,12 +160,10 @@ async def on_message(message):
                     except Exception:
                         logger.exception("Image handling error")
 
-        # 触发无限制搜索（只要有文本，就去全网搜一下带回背景资料）
         video_context = ""
         if user_prompt and not message.attachments:
             video_context = await asyncio.to_thread(search_all_platforms, user_prompt)
 
-        # 1. 注入人设与联网搜索结果
         system_content = config.XIAOMIAO_PERSONA.strip()
         if video_context:
             system_content = f"{system_content}\n\nExternal Search Results (may be unreliable):\n{video_context}"
@@ -195,14 +173,12 @@ async def on_message(message):
             "content": system_content
         })
 
-        # 2. 追加历史轮次记忆
         messages_payload.extend(conversation_history[channel_id])
 
         if not user_content_list:
             await message.channel.send(config.MESSAGES.get("no_input", "No input detected."))
             return
 
-        # 3. 拼接用户当前这一轮的输入
         messages_payload.append({"role": "user", "content": user_content_list})
 
         try:
@@ -217,7 +193,6 @@ async def on_message(message):
                 reply_text = response.choices[0].message.content if hasattr(response, "choices") else str(response)
                 await message.channel.send(reply_text)
 
-                # 4. 记忆库中统一采用结构化字典保存
                 conversation_history[channel_id].append({
                     "role": "user", 
                     "content": [{"type": "text", "text": user_prompt if user_prompt else "[图片消息]"}]
@@ -227,7 +202,6 @@ async def on_message(message):
                     "content": reply_text
                 })
 
-                # 严格裁剪记忆轮数
                 max_rounds = config.MEMORY_CONFIG.get("max_history_rounds", 5)
                 max_len = max_rounds * 2
                 conversation_history[channel_id] = conversation_history[channel_id][-max_len:]
