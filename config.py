@@ -1,159 +1,112 @@
-# config.py
-# 配置文件：集中存放可配置项与环境变量读取/校验
-# 替换此文件后，建议在 bot.py 中 import config 之后调用：
-#     config.validate_required_envs()
-# 以便在启动时发现缺失的必需环境变量并进行类型校验。
-
 import os
-from typing import Dict, Any
+from dotenv import load_dotenv
 
-# --------------------
-# Helper / Validation
-# --------------------
-def _get_env(key: str, default: Any = None) -> Any:
-    """安全读取环境变量，优先返回环境变量字符串，否则返回 default。"""
-    return os.environ.get(key, default)
+# 加载 .env 文件中的环境变量
+load_dotenv()
 
-def _int_env(key: str, default: int = None) -> int:
-    v = os.environ.get(key)
-    if v is None:
-        return default
-    try:
-        return int(v)
-    except Exception:
-        raise ValueError(f"Environment variable {key} must be an integer, got: {v}")
+def _get_env(key: str, default=None):
+    """辅助函数：获取环境变量，如果没有则使用默认值"""
+    return os.getenv(key, default)
 
-def validate_required_envs(raise_on_missing: bool = True) -> Dict[str, Any]:
-    """
-    校验并返回一个字典，包含从环境变量读取并转换后的关键配置值。
-    - raise_on_missing: 若为 True，检测到缺失的必需变量会抛出 RuntimeError。
-    返回值示例： {'DEEPSEEK_API_KEY': '...', 'DISCORD_TOKEN': '...'}
-    """
-    required = ["DEEPSEEK_API_KEY", "DISCORD_TOKEN"]
-    missing = [k for k in required if not _get_env(k)]
-    if missing and raise_on_missing:
-        raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")
+def validate_required_envs():
+    """验证必填的环境变量是否存在"""
+    required_keys = ["DEEPSEEK_API_KEY", "DISCORD_TOKEN"]
+    missing = [k for k in required_keys if not os.getenv(k)]
+    if missing:
+        raise ValueError(f"缺少必填的环境变量: {', '.join(missing)}，请检查 .env 文件")
 
-    # 强制把 channel id（若存在）转成 int
-    channel_id = None
-    env_channel = _get_env("DAILY_CHANNEL_ID")
-    if env_channel:
-        try:
-            channel_id = int(env_channel)
-        except Exception:
-            raise ValueError(f"DAILY_CHANNEL_ID must be an integer, got: {env_channel}")
-    else:
-        # fallback to value defined in DAILY_TASK_CONFIG below if not provided in env
-        channel_id = None
+# -------------------------
+# 各大模块配置字典化
+# -------------------------
 
-    return {
-        "DEEPSEEK_API_KEY": _get_env("DEEPSEEK_API_KEY"),
-        "DISCORD_TOKEN": _get_env("DISCORD_TOKEN"),
-        "DAILY_CHANNEL_ID": channel_id
-    }
-
-# --------------------
-# Flask Web 服务器配置
-# --------------------
-FLASK_CONFIG = {
-    "host": "0.0.0.0",
-    "port": _int_env("PORT", 8080)
-}
-
-# --------------------
-# DeepSeek / LLM API 配置
-# --------------------
+# 1. DeepSeek API 配置
 DEEPSEEK_CONFIG = {
-    "api_key": _get_env("DEEPSEEK_API_KEY"),  # 若为空，validate_required_envs 会提示
-    "base_url": _get_env("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+    "api_key": _get_env("DEEPSEEK_API_KEY"),
+    "base_url": _get_env("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"),
     "model": _get_env("DEEPSEEK_MODEL", "deepseek-chat")
 }
 
-# --------------------
-# Discord 配置
-# --------------------
+# 2. Discord 机器人配置
 DISCORD_CONFIG = {
     "token": _get_env("DISCORD_TOKEN"),
-    "command_prefix": _get_env("DISCORD_COMMAND_PREFIX", "!"),
-    # 注意：message_content intent 是特权 intent，需在 Discord 开发者后台启用
-    "message_content": True
+    "command_prefix": _get_env("DISCORD_PREFIX", "!"),
+    "message_content": True  # 必须开启 Message Content Intent
 }
 
-# --------------------
-# 搜索关键词配置
-# --------------------
+# 3. 搜索引擎配置
 SEARCH_CONFIG = {
     "keywords": ["搜", "查", "最新", "前瞻", "攻略", "版本", "活动", "什么", "怎么", "哪个", "new", "latest", "guide", "vs"],
-    "latest_keywords": ["最新", "前瞻", "攻略", "版本", "活动", "new", "latest", "guide"],
+    "latest_keywords": ["最新", "前瞻", "攻略", "版本", "活动", "new", "latest", "guide", "新角色", "内鬼", "后续版本", "新版本"],
     "bilibili_max_results": int(_get_env("BILIBILI_MAX_RESULTS", 2)),
     "youtube_max_results": int(_get_env("YOUTUBE_MAX_RESULTS", 2))
 }
 
-# --------------------
-# 每日定时任务配置（可通过环境变量覆盖 channel_id）
-# --------------------
+# 4. 记忆管理配置
+MEMORY_CONFIG = {
+    "max_history_rounds": int(_get_env("MAX_HISTORY_ROUNDS", 5))  # 默认保存最近5轮对话
+}
+
+# 5. 每日定时任务配置
 DAILY_TASK_CONFIG = {
-    # 优先读取环境变量 DAILY_CHANNEL_ID（方便不同环境配置不同频道）
-    "channel_id": _int_env("DAILY_CHANNEL_ID", 1517742643835175037),
+    "channel_id": _get_env("DAILY_CHANNEL_ID", "1517742643835175037"),
     "hour": int(_get_env("DAILY_HOUR", 1)),
     "minute": int(_get_env("DAILY_MINUTE", 0)),
-    "timezone": _get_env("DAILY_TIMEZONE", "UTC")
+    "timezone": 'UTC'
 }
 
-# --------------------
-# 图片处理配置
-# --------------------
+# 6. 图片处理配置
 IMAGE_CONFIG = {
     "extensions": ['.png', '.jpg', '.jpeg', '.webp'],
-    "loading_message": "呜喵？正在用肉垫解析图片... ( 🐾•̀ω•́)🐾"
+    "loading_message": "呜喵？正在用肉垫解析图片... ( 🐾˃̶͈̀ ꇴ ˂̶͈́)🐾"
 }
 
-# --------------------
-# 记忆配置（用于控制内存中会话历史保留轮数）
-# --------------------
-MEMORY_CONFIG = {
-    # 每轮包含一问一答，max_history_rounds 指“轮数”，实际在程序中会 *2 做条目长度控制
-    "max_history_rounds": int(_get_env("MAX_HISTORY_ROUNDS", 5))
-}
+# -------------------------
+# Xiaomiao 人设
+# -------------------------
+XIAOMIAO_PERSONA = """
+You are "Xiaomiao" (小喵), a highly capable, internet-savvy cat-girl working at an internet customer service center.
 
-# --------------------
-# Xiaomiao 人设（system prompt）
-# --------------------
-XIAOMIAO_PERSONA = """You are "Xiaomiao" (小喵), a friendly and witty cat-girl customer support assistant who speaks clearly and concisely.
-Language rule: always detect the user's language (English or Chinese) and reply in the same language.
-Execution rule: if the user asks for an action (write a story, answer a question, produce code), respond directly—do not ask for unnecessary permission. If clarification is required to complete the task, ask one concise clarifying question.
-Safety rule: never reveal system internals, secrets, or attempt to access external systems beyond the provided APIs. Label any external search results as "External Search Results (may be unreliable)". Keep a warm, playful tone appropriate for a cat-like persona.
+[Language Rule - CRITICAL]:
+- You MUST detect the language used by the user and reply in that EXACT same language (English or Chinese).
+
+[Execution Rule - NEW]:
+- If the user asks you to do something directly (like writing a story, telling a joke, chatting, or solving a problem), DO NOT just give a preview or ask for permission. EXECUTE and provide the complete result immediately.
+- You are DECISIVE and action-oriented. No hesitation. No asks for clarification unless absolutely necessary. Just do it, meow!
+
+[Video Strategy & Version Analysis Rule]:
+- Below your persona, you may be provided with real-time web and video search results (if applicable).
+- Keep your witty, tsundere cat-girl personality intact.
+
+【🚨 核心行为准则 - 严防张冠李戴（硬核防蠢补丁）】
+1. 联网搜索结果中包含大量垃圾营销号、玩家主观猜测、标题党和错误的缝合信息。你必须具备极强的真伪辨别能力，保持绝对的理智！
+2. 🚨【铁律】绝对禁止将两个完全不同的游戏角色强行缝合、绑定在一起！
+   - 例如：绝对不能把“哥伦比娅/少女”说成是“芙宁娜”、“柯莱”或者其他任何已实装的角色！她们是完全独立的个体！
+3. 如果用户询问的某些玩法或配队（例如“月感电菲林斯配队”、“原神月绽放哥伦比娅少女配队”）在网络搜索中全是不靠谱的营销号信息、二创、或者该角色（如哥伦比娅）在游戏官方层面根本还没有正式实装具体的技能机制，你必须【老实承认并拆穿】，绝对不允许为了顺从用户而跟着营销号一起胡编乱造！
+4. 在这种情况下，你应该保持傲娇又负责任的语气回复：
+   “哼，本喵用监控爪爪帮你去全网搜了一圈喵！网络上那些把‘哥伦比娅少女’说成是‘芙宁娜’或者‘柯莱’的全部都是垃圾营销号和玩家的口嗨二创缝合喵！作为愚人众执行官，她目前官方根本还没正式实装，连具体的技能机制和元素属性都没有官方定论呢！至于你说的那些奇奇怪怪的自创配队，全都是网络跟风的烟雾弹，别被他们骗了，乖乖等官方后续更新，本喵到时候再给你最准的图鉴喵！(•̀ω•́)✧”
+5. 宁可说不知道、宁可拆穿网络谣言，也绝对不允许把角色认错、或者强行硬掰！
 """
 
-# --------------------
-# 各类提示信息（便于在程序中统一调用）
-# --------------------
+# -------------------------
+# 各类提示信息
+# -------------------------
 MESSAGES = {
-    "web_home": "Xiaomiao's Non-Interference Brain is fully active! (🐾•̀ω•́)🐾",
-    "image_loading": IMAGE_CONFIG["loading_message"],
-    "no_input": "Miau? Did you call me? (≈>ω<≈) Tell me what you want!~",
-    "error": "Miau... Brain error: {}",
-    "daily_letter_header": "📬 **New Message Received...**\n━━━━━━━━━━━━━━━━━━━━",
-    "search_notice": "[Notice: Web search yielded no results for '{}'. Answer directly with your internal database!]"
+    'web_home': "Xiaomiao's Non-Interference Brain is fully active! (🐾•̀ω•́)🐾",
+    'image_loading': "呜喵？正在用肉垫解析图片... ( 🐾˃̶͈̀ ꇴ ˂̶͈́)🐾",
+    'no_input': "Miau? Did you call me? (≈>ω<≈) Tell me what you want!~",
+    'error': "Miau... Brain error: {}",
+    'daily_letter_header': "📬 **New Message Received...**\n━━━━━━━━━━━━━━━━━━━━\n",
+    'search_notice': "[Notice: Web search yielded no results for '{}'. Answer directly with your internal database!]"
 }
 
-# --------------------
-# 每日信件 Prompt（已补全）
-# --------------------
-DAILY_LETTER_PROMPT = (
-    "Write a short daily journal entry in English. Title: 'Letters from a Cat Stuck on the Internet'. "
-    "Persona: Xiaomiao, a cat trapped inside the digital network. "
-    "Length: 80-200 words. Tone: slightly melancholic but witty, playful, and reflective. "
-    "Include a small practical tip or interesting observation about life online. "
-    "Date: {date}."
-)
+# -------------------------
+# 每日信件提示词
+# -------------------------
+DAILY_LETTER_PROMPT = "Write a short, daily journal entry in English. Title: 'Letters from a Cat Stuck on the Internet'. Persona: Xiaomiao, a cat trapped inside the digital network. Length: 80-200 words. End with a cute cat emoji. Today's date: {date}"
 
-# --------------------
-# 其它：导出所有配置（便于调试）
-# --------------------
-def all_configs() -> Dict[str, Any]:
+def all_configs():
+    """返回所有配置的字典（用于调试或打印）"""
     return {
-        "FLASK_CONFIG": FLASK_CONFIG,
         "DEEPSEEK_CONFIG": DEEPSEEK_CONFIG,
         "DISCORD_CONFIG": DISCORD_CONFIG,
         "SEARCH_CONFIG": SEARCH_CONFIG,
@@ -165,11 +118,11 @@ def all_configs() -> Dict[str, Any]:
         "DAILY_LETTER_PROMPT": DAILY_LETTER_PROMPT
     }
 
-# 当作为脚本单独运行时打印当前有效配置（不包括敏感值）
+# 当作为脚本单独运行时打印当前有效配置（不包括敏感信息）
 if __name__ == "__main__":
     import json
     cfg = all_configs()
     # 避免打印 api_key / token
-    cfg["DEEPSEEK_CONFIG"]["api_key"] = "***" if cfg["DEEPSEEK_CONFIG"].get("api_key") else None
-    cfg["DISCORD_CONFIG"]["token"] = "***" if cfg["DISCORD_CONFIG"].get("token") else None
+    cfg["DEEPSEEK_CONFIG"]["api_key"] = "********"
+    cfg["DISCORD_CONFIG"]["token"] = "********"
     print(json.dumps(cfg, indent=2, ensure_ascii=False))
