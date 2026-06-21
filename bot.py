@@ -63,26 +63,22 @@ client = OpenAI(
 conversation_history = {}
 
 # -------------------------
-# 🧠 强力修正版智能搜索函数（禁止瞎猜，遇到游戏核心词强制联网）
+# 🧠 无限制智能搜索函数（彻底放开限制，决不摆烂）
 # -------------------------
 def search_all_platforms(query: str) -> str:
-    # 🚨 核心防御：只要用户提到这些关键词，不管有没有带“搜/查”，一律强制开启联网搜索！
-    GAME_TRIGGERS = ["原神", "配队", "攻略", "角色", "哥伦比娅", "少女"]
-    is_game_query = any(trigger in query for trigger in GAME_TRIGGERS)
-    
-    # 既没有触发游戏词，也没有触发常规配置关键词，才不联网
-    if not (is_game_query or any(kw in query for kw in config.SEARCH_CONFIG.get("keywords", []))):
+    # 🚨 彻底打破关键词限制！只要有提问，一律允许联网搜索，防止任何冷门词/错别字导致不联网
+    if not query or len(query.strip()) < 2:
         return ""
 
     search_context = ""
     
-    # 时效性动态触发
-    latest_triggers = config.SEARCH_CONFIG.get("latest_keywords", []) + ["最新", "前瞻", "新角色", "内鬼", "后续版本", "新版本"]
+    # 时效性动态触发：如果用户提到了新时代词汇，自动加2026微调
+    latest_triggers = ["最新", "前瞻", "新角色", "内鬼", "后续版本", "新版本", "配队", "攻略"]
     is_latest_query = any(keyword in query for keyword in latest_triggers)
     
     search_query = f"{query} 2026" if is_latest_query else query
     
-    # 🎯 针对“哥伦比娅”的精准纠偏：如果包含此名字，直接优化搜索词，不给搜索引擎任何装糊涂的机会
+    # 🎯 特殊名词纠偏包（保留针对哥伦比娅的定向强化）
     if "哥伦比娅" in query:
         search_query = "原神 愚人众执行官 哥伦比娅 角色信息 配队 2026"
 
@@ -96,14 +92,12 @@ def search_all_platforms(query: str) -> str:
                     search_context += f"Result [{i}]:\nTitle: {r.get('title')}\nSnippet: {r.get('body')}\n\n"
 
             # 2. Bilibili 视频辅助小抄
-            bili_results = [r for r in ddgs.text(f"{search_query} site:bilibili.com", max_results=config.SEARCH_CONFIG.get("bilibili_max_results", 2))]
+            bili_results = [r for r in ddgs.text(f"{search_query} site:bilibili.com", max_results=2)]
             if bili_results:
                 search_context += "=== BILIBILI VIDEO GUIDES ===\n"
                 for i, r in enumerate(bili_results, 1):
                     search_context += f"Bilibili [{i}]:\nTitle: {r.get('title')}\nLink: {r.get('href')}\nSnippet: {r.get('body')}\n\n"
 
-            if not search_context:
-                return config.MESSAGES.get("search_notice", "").format(query)
             return search_context
     except Exception:
         logger.exception("Search error")
@@ -186,7 +180,7 @@ async def on_message(message):
                     except Exception:
                         logger.exception("Image handling error")
 
-        # 触发智能弹性搜索（已经整合了强制游戏检索）
+        # 触发无限制搜索（只要有文本，就去全网搜一下带回背景资料）
         video_context = ""
         if user_prompt and not message.attachments:
             video_context = await asyncio.to_thread(search_all_platforms, user_prompt)
@@ -201,7 +195,7 @@ async def on_message(message):
             "content": system_content
         })
 
-        # 2. 追加历史轮次记忆（格式完全规范统一）
+        # 2. 追加历史轮次记忆
         messages_payload.extend(conversation_history[channel_id])
 
         if not user_content_list:
@@ -223,7 +217,7 @@ async def on_message(message):
                 reply_text = response.choices[0].message.content if hasattr(response, "choices") else str(response)
                 await message.channel.send(reply_text)
 
-                # 4. 记忆库中统一采用结构化字典保存，杜绝选择性失忆
+                # 4. 记忆库中统一采用结构化字典保存
                 conversation_history[channel_id].append({
                     "role": "user", 
                     "content": [{"type": "text", "text": user_prompt if user_prompt else "[图片消息]"}]
