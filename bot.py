@@ -6,6 +6,8 @@ import threading
 import datetime
 import aiohttp
 import base64
+import time
+from collections import defaultdict
 
 import discord
 from discord.ext import tasks, commands
@@ -62,8 +64,115 @@ client = OpenAI(
     base_url=config.DEEPSEEK_CONFIG.get("base_url")
 )
 
-# 全局持久化记忆库
-conversation_history = {}
+# -------------------------
+# 智能对话记忆管理
+# -------------------------
+class ConversationMemory:
+    """
+    带有自动过期和大小限制的对话记忆管理器
+    防止内存泄漏
+    """
+    def __init__(self, max_channels=100, max_memory_mb=512, max_age_hours=24):
+        self.storage = defaultdict(lambda: {"messages": [], "last_accessed": time.time()})
+        self.max_channels = max_channels  # 最多缓存频道数
+        self.max_memory_mb = max_memory_mb  # 最大内存 (MB)
+        self.max_age_hours = max_age_hours  # 超过 24 小时未访问则清理
+    
+    def add_message(self, channel_id: int, message: dict):
+        """添加消息并检查内存"""
+        self.storage[channel_id]["messages"].append(message)
+        self.storage[channel_id]["last_accessed"] = time.time()
+        
+        # 检查单个频道历史限制
+        max_rounds = config.MEMORY_CONFIG.get("max_history_rounds", 5)
+        max_len = max_rounds * 2
+        if len(self.storage[channel_id]["messages"]) > max_len:
+            self.storage[channel_id]["messages"] = self.storage[channel_id]["messages"][-max_len:]
+        
+        # 定期清理过期和超大频道
+        self._cleanup_if_needed()
+    
+    def get_messages(self, channel_id: int) -> list:
+        """获取频道的对话历史"""
+        if channel_id in self.storage:
+            self.storage[channel_id]["last_accessed"] = time.time()
+            return self.storage[channel_id]["messages"]
+        return []
+    
+    def _cleanup_if_needed(self):
+        """
+        定期清理：
+        1. 超过 24 小时未访问的频道
+        2. 超过频道数上限时，删除最旧的
+        """
+        current_time = time.time()
+        max_age_seconds = self.max_age_hours * 3600
+        
+        # 清理过期频道
+        expired = [
+            ch_id for ch_id, data in self.storage.items()
+            if current_time - data["last_accessed"] > max_age_seconds
+        ]
+        for ch_id in expired:
+            logger.info("Cleaning expired channel %s", ch_id)
+            del self.storage[ch_id]
+        
+        # 频道数超限时，删除最旧的访问记录
+        if len(self.storage) > self.max_channels:
+            oldest = min(
+                self.storage.items(),
+                key=lambda x: x[1]["last_accessed"]
+            )[0]
+            logger.warning("Memory full, removing oldest channel %s", oldest)
+            del self.storage[oldest]
+
+# 初始化智能记忆管理器
+memory_manager = ConversationMemory(max_channels=100, max_memory_mb=512, max_age_hours=24)
+
+# -------------------------
+# 消息分割工具
+# -------------------------
+def split_discord_message(text: str, max_length: int = 2000) -> list:
+    """
+    将长文本分割成多条 Discord 消息（不超过 2000 字符）
+    保持完整的句子和代码块结构
+    """
+    if len(text) <= max_length:
+        return [text]
+    
+    chunks = []
+    current_chunk = ""
+    
+    # 按段落分割优先
+    paragraphs = text.split('\n\n')
+    
+    for para in paragraphs:
+        if len(current_chunk) + len(para) + 2 <= max_length:
+            current_chunk += para + '\n\n'
+        else:
+            if current_chunk:
+                chunks.append(current_chunk.rstrip())
+            
+            # 如果单个段落超长，按行分割
+            if len(para) > max_length:
+                lines = para.split('\n')
+                temp = ""
+                for line in lines:
+                    if len(temp) + len(line) + 1 <= max_length:
+                        temp += line + '\n'
+                    else:
+                        if temp:
+                            chunks.append(temp.rstrip())
+                        temp = line + '\n'
+                if temp:
+                    chunks.append(temp.rstrip())
+            else:
+                current_chunk = para + '\n\n'
+    
+    if current_chunk:
+        chunks.append(current_chunk.rstrip())
+    
+    return chunks
 
 # -------------------------
 # 无限制智能搜索函数
@@ -163,8 +272,6 @@ async def on_message(message):
         user_prompt = message.content.replace(f'<@{bot.user.id}>', '').strip()
 
         channel_id = message.channel.id
-        if channel_id not in conversation_history:
-            conversation_history[channel_id] = []
 
         messages_payload = []
         user_content_list = []
@@ -205,7 +312,7 @@ async def on_message(message):
             "content": system_content
         })
 
-        messages_payload.extend(conversation_history[channel_id])
+        messages_payload.extend(memory_manager.get_messages(channel_id))
 
         if not user_content_list:
             await message.channel.send(config.MESSAGES.get("no_input", "No input detected."))
@@ -223,24 +330,26 @@ async def on_message(message):
                 )
 
                 reply_text = response.choices[0].message.content if hasattr(response, "choices") else str(response)
-                await message.channel.send(reply_text)
+                
+                # ✅ 处理长消息
+                chunks = split_discord_message(reply_text)
+                for chunk in chunks:
+                    await message.channel.send(chunk)
 
-                conversation_history[channel_id].append({
+                # 保存到对话历史
+                memory_manager.add_message(channel_id, {
                     "role": "user", 
                     "content": [{"type": "text", "text": user_prompt if user_prompt else "[图片消息]"}]
                 })
-                conversation_history[channel_id].append({
+                memory_manager.add_message(channel_id, {
                     "role": "assistant", 
                     "content": reply_text
                 })
 
-                max_rounds = config.MEMORY_CONFIG.get("max_history_rounds", 5)
-                max_len = max_rounds * 2
-                conversation_history[channel_id] = conversation_history[channel_id][-max_len:]
-
         except Exception as e:
             logger.exception("Message handling failed: %s", e)
-            await message.channel.send(config.MESSAGES.get("error", "Error: {}").format(e))
+            error_msg = str(e)[:100]
+            await message.channel.send(config.MESSAGES.get("error", "Error: {}").format(error_msg))
 
     await bot.process_commands(message)
 
